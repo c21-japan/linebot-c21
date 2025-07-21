@@ -42,13 +42,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const key = `u:${userId}`;
     const userMessage = event.message.text;
 
-    let historyRaw: string[] = [];
+    let historyRaw: any[] = [];
     try {
-      historyRaw = (await redis.lrange(key, -10, -1)) || [];
+      const raw = await redis.lrange(key, -10, -1);
+      historyRaw = Array.isArray(raw) ? raw : [];
     } catch (e) {
       historyRaw = [];
     }
-    const history = Array.isArray(historyRaw) ? historyRaw.map((msg) => JSON.parse(msg)) : [];
+    const history = historyRaw.map((msg) => JSON.parse(msg));
 
     const messages = [
       { role: 'system', content: 'あなたは関西弁で親しみやすい不動産エージェントAIです。' },
