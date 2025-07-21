@@ -4,87 +4,72 @@ import OpenAI from 'openai';
 import { createClient } from 'redis';
 import 'dotenv/config';
 
-// LINE SDKの設定
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!,
   channelSecret: process.env.LINE_CHANNEL_SECRET!,
 };
-
 const client = new Client(lineConfig);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // POST以外は拒否
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method Not Allowed');
+// Redisクライアントを初期化（再接続防止用）
+let redisReady = false;
+const redis = createClient({ url: process.env.REDIS_URL });
+const ensureRedisConnected = async () => {
+  if (!redisReady) {
+    await redis.connect();
+    redisReady = true;
   }
+};
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   const signature = req.headers['x-line-signature'] as string;
   const rawBody = (req as any).rawBody;
 
-  // シグネチャ検証
   const isValid = validateSignature(rawBody, lineConfig.channelSecret, signature);
-  if (!isValid) {
-    return res.status(401).send('Unauthorized');
-  }
+  if (!isValid) return res.status(401).send('Invalid Signature');
 
-  const body = JSON.parse(rawBody.toString());
-  const events = body.events;
+  try {
+    const body = JSON.parse(rawBody.toString());
+    const events = body.events;
 
-  // Redisクライアントをリクエストごとに生成
-  const redis = createClient({ url: process.env.REDIS_URL });
-  await redis.connect();
+    await ensureRedisConnected();
 
-  await Promise.all(events.map(async (event: any) => {
-    if (event.type !== 'message' || event.message.type !== 'text') return;
+    await Promise.all(events.map(async (event: any) => {
+      if (event.type !== 'message' || event.message.type !== 'text') return;
 
-    const userId = event.source.userId;
-    const key = `u:${userId}`;
-    const userMessage = event.message.text;
+      const userId = event.source.userId;
+      const key = `u:${userId}`;
+      const messageText = event.message.text;
 
-    let historyRaw: any[] = [];
-    try {
-      const raw = await redis.lrange(key, -10, -1);
-      historyRaw = Array.isArray(raw) ? raw : [];
-    } catch (e) {
-      historyRaw = [];
-    }
-    const history = historyRaw.map((msg) => JSON.parse(msg));
+      const historyRaw = await redis.lrange(key, -10, -1);
+      const history = historyRaw.map(JSON.parse);
 
-    const messages = [
-      { role: 'system', content: 'あなたは関西弁で親しみやすい不動産エージェントAIです。' },
-      ...history,
-      { role: 'user', content: userMessage },
-    ];
+      const messages = [
+        { role: 'system', content: 'あなたは関西弁で親しみやすい不動産エージェントAIです。' },
+        ...history,
+        { role: 'user', content: messageText }
+      ];
 
-    let reply = 'すみません、今は応答できませんでした。';
-    try {
-      const chat = await openai.chat.completions.create({
+      const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
-        messages,
-        max_tokens: 256,
-        temperature: 0.7,
+        messages
       });
-      reply = chat.choices[0]?.message?.content || reply;
-    } catch (e) {
-      // OpenAIエラー時は即返す
-    }
 
-    try {
+      const reply = completion.choices[0]?.message?.content || 'うまく返せませんでした。';
       await client.replyMessage(event.replyToken, { type: 'text', text: reply });
-      await redis
-        .multi()
-        .rpush(key, JSON.stringify({ role: 'user', content: userMessage }))
+
+      await redis.multi()
+        .rpush(key, JSON.stringify({ role: 'user', content: messageText }))
         .rpush(key, JSON.stringify({ role: 'assistant', content: reply }))
         .ltrim(key, -10, -1)
         .exec();
-    } catch (e) {
-      // 送信・保存エラー時も無視
-    }
-  }));
+    }));
 
-  // 必ずクローズ
-  await redis.disconnect();
-
-  return res.status(200).send('OK');
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('❌ webhook error:', err);
+    res.status(500).send('Internal Server Error');
+  }
 } 
