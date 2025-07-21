@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "api/webhook.ts": {
+      "maxDuration": 20,
+      "memory": 512,
+      "runtime": "nodejs18.x"
+    }
+  }
+} 

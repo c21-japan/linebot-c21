@@ -46,8 +46,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const key = `u:${userId}`;
     const userMessage = event.message.text;
 
-    const historyRaw = await redis.lrange(key, -10, -1);
-    const history = historyRaw.map((msg) => JSON.parse(msg));
+    let historyRaw: string[] = [];
+    try {
+      historyRaw = (await redis.lrange(key, -10, -1)) || [];
+    } catch (e) {
+      historyRaw = [];
+    }
+    const history = Array.isArray(historyRaw) ? historyRaw.map((msg) => JSON.parse(msg)) : [];
 
     const messages = [
       { role: 'system', content: 'あなたは関西弁で親しみやすい不動産エージェントAIです。' },
@@ -55,21 +60,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { role: 'user', content: userMessage },
     ];
 
-    const chat = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages,
-    });
+    let reply = 'すみません、今は応答できませんでした。';
+    try {
+      const chat = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+        max_tokens: 256,
+        temperature: 0.7,
+      });
+      reply = chat.choices[0]?.message?.content || reply;
+    } catch (e) {
+      // OpenAIエラー時は即返す
+    }
 
-    const reply = chat.choices[0]?.message?.content || 'うまく返せませんでした。';
-
-    await client.replyMessage(event.replyToken, { type: 'text', text: reply });
-
-    await redis
-      .multi()
-      .rpush(key, JSON.stringify({ role: 'user', content: userMessage }))
-      .rpush(key, JSON.stringify({ role: 'assistant', content: reply }))
-      .ltrim(key, -10, -1)
-      .exec();
+    try {
+      await client.replyMessage(event.replyToken, { type: 'text', text: reply });
+      await redis
+        .multi()
+        .rpush(key, JSON.stringify({ role: 'user', content: userMessage }))
+        .rpush(key, JSON.stringify({ role: 'assistant', content: reply }))
+        .ltrim(key, -10, -1)
+        .exec();
+    } catch (e) {
+      // 送信・保存エラー時も無視
+    }
   }));
 
   return res.status(200).send('OK');
