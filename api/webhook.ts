@@ -12,16 +12,8 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const redis = createClient({ url: process.env.REDIS_URL });
-let redisConnected = false;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Redis接続（初回のみ）
-  if (!redisConnected) {
-    await redis.connect();
-    redisConnected = true;
-  }
-
   // POST以外は拒否
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
@@ -38,6 +30,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = JSON.parse(rawBody.toString());
   const events = body.events;
+
+  // Redisクライアントをリクエストごとに生成
+  const redis = createClient({ url: process.env.REDIS_URL });
+  await redis.connect();
 
   await Promise.all(events.map(async (event: any) => {
     if (event.type !== 'message' || event.message.type !== 'text') return;
@@ -85,6 +81,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 送信・保存エラー時も無視
     }
   }));
+
+  // 必ずクローズ
+  await redis.disconnect();
 
   return res.status(200).send('OK');
 } 
