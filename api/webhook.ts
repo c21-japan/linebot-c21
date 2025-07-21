@@ -1,3 +1,4 @@
+// 2025-07-21: force redeploy for Vercel
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { Client, validateSignature } from '@line/bot-sdk';
 import OpenAI from 'openai';
