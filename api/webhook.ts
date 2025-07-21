@@ -13,9 +13,15 @@ const lineConfig = {
 const client = new Client(lineConfig);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const redis = createClient({ url: process.env.REDIS_URL });
-await redis.connect();
+let redisConnected = false;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Redis接続（初回のみ）
+  if (!redisConnected) {
+    await redis.connect();
+    redisConnected = true;
+  }
+
   // POST以外は拒否
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
