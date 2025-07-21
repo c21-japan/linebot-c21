@@ -25,21 +25,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await Promise.all(events.map(async (event: any) => {
       if (event.type !== 'message' || event.message.type !== 'text') return;
 
+      const userMessage = event.message.text;
+
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: 'あなたは関西弁で親しみやすい不動産エージェントAIです。' },
-          { role: 'user', content: event.message.text },
-        ],
+          { role: 'user', content: userMessage }
+        ]
       });
 
-      const reply = completion.choices[0]?.message?.content || 'すみません、うまく返せませんでした。';
+      const reply = completion.choices[0]?.message?.content || 'うまく返せませんでした。';
       await client.replyMessage(event.replyToken, { type: 'text', text: reply });
     }));
 
     res.status(200).send('OK');
   } catch (err) {
     console.error('❌ webhook error:', err);
-    res.status(200).send('Handled error');
+    res.status(200).send('Error Handled');
   }
 }
